@@ -1,74 +1,90 @@
 import numpy as np
 import json
 
-
 def gerar_dados_videos_json(tempo_total_simulacao, num_videos, a_zipf, num_usuarios):
     """
     Gera dados simulados de sessões de vídeo e salva em um arquivo JSON com detalhes das requisições dos usuários.
-
-    Parâmetros:
-    - tempo_total_simulacao: Tempo total de simulação (em segundos).
-    - num_videos: Número total de vídeos disponíveis.
-    - a_zipf: Parâmetro de inclinação da distribuição de Zipf.
-    - num_usuarios: Número total de usuários únicos.
     """
+    # Ajustar o número de intervalos com base no tempo total de simulação
+    num_intervalos = np.random.randint(2, min(10, tempo_total_simulacao + 1))  # Definir entre 2 a 10 intervalos ou tempo_total_simulacao + 1
 
-    # Gerar particionamento aleatório do tempo total de simulação
-    num_intervalos = np.random.randint(2, 10)  # Definir entre 2 a 10 intervalos
-    particionamento = np.sort(np.random.randint(1, tempo_total_simulacao, num_intervalos - 1))
-    particionamento = np.concatenate(([0], particionamento, [tempo_total_simulacao]))  # Inclui o tempo 0 e total
+    # Gerar tempos únicos para o particionamento
+    possible_times = np.arange(1, tempo_total_simulacao)
+    num_times = min(len(possible_times), num_intervalos - 1)
+    if num_times > 0:
+        particionamento_interm = np.sort(np.random.choice(possible_times, size=num_times, replace=False))
+        particionamento = np.concatenate(([0], particionamento_interm, [tempo_total_simulacao]))  # Inclui o tempo 0 e total
+    else:
+        particionamento = np.array([0, tempo_total_simulacao])
 
-    # Gerar distribuição Zipf para determinar a quantidade de pessoas por vídeo
-    video_popularity = np.random.zipf(a_zipf, num_usuarios)
-    video_popularity = video_popularity % num_videos  # Garantir IDs dentro do limite de vídeos
-    unique, counts = np.unique(video_popularity, return_counts=True)
+    # Gerar distribuição Zipf para determinar a popularidade dos vídeos
+    ranks = np.arange(1, num_videos + 1)
+    probabilities = 1 / np.power(ranks, a_zipf)
+    probabilities /= probabilities.sum()  # Normalizar para somar 1
 
-    # Mapear o número de usuários para cada vídeo
-    video_user_map = {video: count for video, count in zip(unique, counts)}
+    # Atribuir vídeos aos usuários com base na distribuição Zipf
+    video_ids = np.random.choice(ranks, size=num_usuarios, p=probabilities)
+    user_ids = np.arange(num_usuarios)
+
+    # Mapear usuários aos vídeos
+    user_video_map = dict(zip(user_ids, video_ids))
 
     # Criar a estrutura para armazenar os dados das sessões de vídeo
     dados_videos = []
     taxas_poisson = []
 
-    # Simular para cada intervalo de tempo
+    # Primeiro, garantir que cada usuário tenha pelo menos uma sessão
+    for user_id in user_ids:
+        video_id = user_video_map[user_id]
+
+        # Gerar o tempo de chegada (start_time)
+        start_time = np.random.randint(0, tempo_total_simulacao)
+        session_duration = np.random.randint(1, 10)  # Duração da sessão entre 1 e 10 segundos
+
+        # Adicionar o registro da sessão
+        dados_videos.append({
+            "video_id": int(video_id),
+            "user_id": int(user_id),
+            "start_time": start_time,
+            "end_time": start_time + session_duration  # Tempo final da sessão
+        })
+
+    # Agora, simular acessos adicionais usando processos de Poisson
     for i in range(len(particionamento) - 1):
         inicio_intervalo = particionamento[i]
         fim_intervalo = particionamento[i + 1]
 
-        # Gerar IDs de usuários aleatórios sem repetição para cada intervalo
-        usuarios_disponiveis = list(np.random.permutation(np.arange(0, num_usuarios)))
+        # Verificar se o intervalo é válido
+        if fim_intervalo <= inicio_intervalo:
+            continue  # Pular intervalos inválidos
 
         # Gerar uma taxa de Poisson para cada intervalo
         lambda_acesso = np.random.uniform(0.5, 5)  # Variação aleatória da taxa de Poisson entre os intervalos
         taxas_poisson.append(lambda_acesso)
 
-        # Para cada vídeo, gerar acessos de acordo com a distribuição de Poisson
-        for video_id, num_pessoas in video_user_map.items():
-            if len(usuarios_disponiveis) == 0:
-                break
+        # Número de acessos neste intervalo
+        num_acessos = np.random.poisson(lambda_acesso)
 
-            # Quantos acessos ocorrerão neste intervalo (Poisson)
-            num_acessos = np.random.poisson(lambda_acesso)
+        # Selecionar usuários aleatoriamente (com repetição)
+        usuarios_selecionados = np.random.choice(user_ids, size=num_acessos, replace=True)
 
-            # O número de acessos não pode exceder o número de pessoas disponíveis
-            num_acessos = min(num_acessos, num_pessoas, len(usuarios_disponiveis))
+        for user_id in usuarios_selecionados:
+            video_id = user_video_map[user_id]
 
-            # Selecionar usuários para este vídeo
-            usuarios_selecionados = usuarios_disponiveis[:num_acessos]
-            usuarios_disponiveis = usuarios_disponiveis[num_acessos:]  # Remover esses usuários da lista
+            # Gerar o tempo de chegada (start_time)
+            start_time = np.random.randint(inicio_intervalo, fim_intervalo)
+            session_duration = np.random.randint(1, 10)  # Duração da sessão entre 1 e 10 segundos
 
-            for user_id in usuarios_selecionados:
-                # Gerar o tempo de chegada (start_time) e a duração da sessão (end_time)
-                start_time = np.random.randint(inicio_intervalo, fim_intervalo)
-                session_duration = np.random.randint(1, 10)  # Duração da sessão entre 1 e 10 segundos
+            # Adicionar o registro da sessão
+            dados_videos.append({
+                "video_id": int(video_id),
+                "user_id": int(user_id),
+                "start_time": start_time,
+                "end_time": start_time + session_duration  # Tempo final da sessão
+            })
 
-                # Adicionar o registro da sessão
-                dados_videos.append({
-                    "video_id": int(video_id),
-                    "user_id": int(user_id),
-                    "start_time": start_time,
-                    "end_time": session_duration  # Duração em segundos
-                })
+    # Organizar os dados por ordem de chegada (start_time)
+    dados_videos = sorted(dados_videos, key=lambda x: x['start_time'])
 
     # Criar a estrutura final de saída, incluindo as informações do particionamento, Zipf e Poisson
     dados_saida = {
@@ -84,7 +100,6 @@ def gerar_dados_videos_json(tempo_total_simulacao, num_videos, a_zipf, num_usuar
 
     print(f"Arquivo 'dados_videos_aprimorado_simulacao.json' criado com sucesso com dados de {num_usuarios} usuários!")
 
-
 # Exemplo de chamada da função
 if __name__ == "__main__":
     # Solicitar parâmetros ao usuário
@@ -92,8 +107,7 @@ if __name__ == "__main__":
 
     tempo_total_simulacao = int(input("Informe o tempo total de simulação (em segundos): "))
     num_videos = int(input("Informe o número total de vídeos: "))
-    a_zipf = float(
-        input("Informe o parâmetro 'a' da distribuição de Zipf (maior valor significa mais desbalanceamento): "))
+    a_zipf = float(input("Informe o parâmetro 'a' da distribuição de Zipf (maior valor significa mais desbalanceamento): "))
     num_usuarios = int(input("Informe o número de usuários únicos: "))
 
     # Chamar a função com os parâmetros fornecidos
